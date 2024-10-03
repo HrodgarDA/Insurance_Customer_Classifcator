@@ -56,7 +56,8 @@ from imblearn.pipeline import Pipeline
 
 # %%
 # Caricamento dei dati
-dataframe = pd.read_csv('insurance_dataframe.csv')
+data_path =  '/Users/rugg/Documents/GitHub/Insurance_Customer_Classifcator/Insurance_data.csv'
+dataframe = pd.read_csv(data_path)
 print(dataframe.head())
 
 RS = np.random.randint(0, 100)
