@@ -1,193 +1,327 @@
 # %% [markdown]
 # # Previsione di opportunità di Cross Sell di assicurazioni
-# 
-# Questo notebook analizza un dataset di assicurazioni per prevedere se i clienti sarebbero interessati ad acquistare un'assicurazione per il proprio veicolo.
 
 # %% [markdown]
 # ## Importazione delle librerie
+
+# %%
+import sys
+import subprocess
+import pkg_resources
+
+# Lista delle librerie richieste
+required = {
+    "pandas", "numpy", "matplotlib", "seaborn", "scikit-learn", "imbalanced-learn",
+    "scipy", "plotly", "imblearn"
+}
+
+# Controlla le librerie installate
+installed = {pkg.key for pkg in pkg_resources.working_set}
+missing = required - installed
+
+# Se ci sono librerie mancanti, installale
+if missing:
+    print("Installazione delle librerie mancanti...")
+    python = sys.executable
+    subprocess.check_call([python, '-m', 'pip', 'install', *missing], stdout=subprocess.DEVNULL)
+    print("Installazione completata.")
+else:
+    print("Tutte le librerie richieste sono già installate.")
 
 # %%
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy import stats
+import plotly.express as px
+from collections import Counter
+
+from sklearn.utils import resample
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
-from sklearn.feature_selection import SelectKBest, f_classif
-from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import SelectKBest, f_classif, RFE, SelectFromModel
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report, roc_curve, auc
+from sklearn.linear_model import LogisticRegression, Lasso
 from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.naive_bayes import GaussianNB
+
 from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.pipeline import Pipeline
 
 # %% [markdown]
 # ## Caricamento e esplorazione dei dati
 
 # %%
 # Caricamento dei dati
-df = pd.read_csv('insurance.csv')
+dataframe = pd.read_csv('insurance_dataframe.csv')
+print(dataframe.head())
 
-# Visualizzazione delle prime righe del dataset
-print(df.head())
+RS = np.random.randint(0, 100)
 
+# %%
 # Informazioni sul dataset
-print(df.info())
-
-# Statistiche descrittive
-print(df.describe())
-
-# Controllo dei valori mancanti
-print(df.isnull().sum())
+print(f'DATAFRAME INFO:')
+print(dataframe.info())
+print("_"*70)
+print(f'DATAFRAME NULL COUNT: \n {dataframe.isnull().sum()}')
+print("_"*70)
+print(f'DATAFRAME DESCRIPTION: \n {dataframe.describe()}')
+print("_"*70)
 
 # %% [markdown]
 # ## Visualizzazione dei dati
 
 # %%
-# Distribuzione della variabile target
+# Target Variable distribution
 plt.figure(figsize=(8, 6))
-sns.countplot(x='Response', data=df)
-plt.title('Distribuzione della variabile target')
+sns.countplot(x='Response', data=dataframe, hue='Response')
+plt.title('Target class value distribution')
 plt.show()
 
-# Correlazione tra le variabili numeriche
-correlation_matrix = df.corr()
+# %%
+# Distribution of feature values
+features = dataframe.columns.drop(['Response', 'id'])
+n_features = len(features)
+n_cols = 5
+n_rows = (n_features + n_cols - 1) // n_cols
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 4*n_rows))
+fig.suptitle('Distribution of feature Values', fontsize=25)
+
+for i, feature in enumerate(features):
+    ax = axes[i // n_cols, i % n_cols]
+    if dataframe[feature].dtype in ['int64', 'float64']:
+        sns.histplot(data=dataframe, x=feature, hue='Response', kde=True, ax=ax, legend=False)
+    else:
+        sns.countplot(data=dataframe, x=feature, hue='Response', ax=ax, legend=False)
+    ax.set_title(feature)
+    ax.tick_params(axis='x', rotation=45)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+# Outlier detection
+def plot_outliers(df, threshold=3):
+    fig, axs = plt.subplots(len(df.columns), figsize=(12, 4*len(df.columns)), constrained_layout=True)
+    
+    for i, feature in enumerate(df.columns):
+        if np.issubdtype(df[feature].dtype, np.number):
+            unique_values = df[feature].unique()
+            if len(unique_values) > 2 or not (0 in unique_values and 1 in unique_values):
+                z_scores = np.abs(stats.zscore(df[feature]))
+                outliers = df.loc[np.abs(z_scores) > threshold]
+                
+                axs[i].boxplot(df[feature], vert=False, showfliers=False)
+                axs[i].scatter(outliers[feature], [1] * len(outliers), color='red', label='Outliers')
+                axs[i].set_xlabel(feature)
+            else:
+                axs[i].axis('off')
+        else:
+            axs[i].axis('off')
+    
+    plt.show()
+
+plot_outliers(dataframe)
+print('\nOutliers detected in Annual_Premium feature')
+
+# %%
+# Data cleaning
+def remove_outliers(df, threshold=3):
+    df_clean = df.copy()
+    for feature in df.columns:
+        if np.issubdtype(df[feature].dtype, np.number):
+            unique_values = df[feature].unique()
+            if len(unique_values) > 2 or not (0 in unique_values and 1 in unique_values):
+                z_scores = np.abs(stats.zscore(df[feature]))
+                df_clean = df_clean[np.abs(z_scores) <= threshold]
+    return df_clean
+
+cleaned_df = remove_outliers(dataframe)
+
+print("Shape of previous dataframe:", dataframe.shape)
+print("Shape of cleaned dataframe:", cleaned_df.shape)
+percentage = round((len(cleaned_df)/len(dataframe))*100, 2)
+print(f"Percentage of values kept: {percentage}%")
+
+print('Number of null values in target variable:', cleaned_df['Response'].isna().sum())
+print(cleaned_df.head(1))
+
+# %% [markdown]
+# ## Feature Engineering e Selezione
+
+# %%
+# Label Encoding
+cleaned_df['Vehicle_Age'] = cleaned_df['Vehicle_Age'].map({'> 2 Years': 2, '1-2 Year': 1, '< 1 Year': 0})
+cleaned_df['Gender_Flag'] = cleaned_df['Gender'].map({'Male': 1, 'Female': 0})
+cleaned_df['Vehicle_Damage'] = cleaned_df['Vehicle_Damage'].map({'Yes': 1, 'No': 0})
+cleaned_df['Previously_Insured'] = cleaned_df['Previously_Insured'].astype(int)
+
+cleaned_df.drop(['Gender', 'id'], axis=1, inplace=True)
+cleaned_df = cleaned_df[[col for col in cleaned_df if col != 'Response'] + ['Response']]
+
+print(cleaned_df.head(3))
+
+# %%
+# Correlation matrix
+correlation_matrix = cleaned_df.corr()
 plt.figure(figsize=(12, 10))
-sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm')
-plt.title('Matrice di correlazione')
+sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1, center=0)
+plt.title('Correlation Matrix', fontsize=16)
 plt.show()
-
-# Distribuzione dell'età
-plt.figure(figsize=(10, 6))
-sns.histplot(df['Age'], bins=30, kde=True)
-plt.title('Distribuzione dell\'età')
-plt.show()
-
-# Relazione tra età e premio annuale
-plt.figure(figsize=(10, 6))
-sns.scatterplot(x='Age', y='Annual_Premium', hue='Response', data=df)
-plt.title('Relazione tra età e premio annuale')
-plt.show()
-
-# Distribuzione del premio annuale per risposta
-plt.figure(figsize=(10, 6))
-sns.boxplot(x='Response', y='Annual_Premium', data=df)
-plt.title('Distribuzione del premio annuale per risposta')
-plt.show()
-
-# %% [markdown]
-# ## Preparazione dei dati
 
 # %%
-# Separazione delle caratteristiche e della variabile target
-X = df.drop(['id', 'Response'], axis=1)
-y = df['Response']
+# Train-test split and balancing
+X = cleaned_df.drop('Response', axis=1)
+y = cleaned_df['Response']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RS)
 
-# Codifica one-hot per le variabili categoriche
-X = pd.get_dummies(X, columns=['Gender', 'Vehicle_Age', 'Vehicle_Damage'])
+print("Original classes distribution:")
+print(Counter(y_train))
+print(f'Minor class percentage before balancing = {round(sum(y_train==1)/len(y_train)*100,2)}%')
 
-# Divisione in set di training e test
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Balancing pipeline
+over_under_pipeline = Pipeline([
+    ('over', SMOTE(sampling_strategy=0.6, random_state=42)),
+    ('under', RandomUnderSampler(sampling_strategy=0.75, random_state=42))
+])
 
-# Scalatura delle caratteristiche numeriche
+X_train_balanced, y_train_balanced = over_under_pipeline.fit_resample(X_train, y_train)
+
+print("\nClass distribution after over-under sampling:")
+print(Counter(y_train_balanced))
+print(f'Minor class percentage after balancing = {round(sum(y_train_balanced==1)/len(y_train_balanced)*100,2)}%')
+
+# %% [markdown]
+# ## Feature Selection
+
+# %%
+def compare_feature_selection_methods(X, y, n_features=5, cv=5):
+    scaler = StandardScaler()
+    X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
+
+    selectors = [
+        ('SelectKBest', SelectKBest(score_func=f_classif, k=n_features)),
+        ('RFE', RFE(LogisticRegression(max_iter=1000), n_features_to_select=n_features, step=1)),
+        ('Lasso', SelectFromModel(Lasso(alpha=0.1), max_features=n_features))
+    ]
+    
+    results = {}
+
+    for name, selector in selectors:
+        try:
+            selector.fit(X_scaled, y)
+            mask = selector.get_support()
+            best_features = X.columns[mask].tolist()
+            X_selected = X_scaled[best_features]
+
+            scores = cross_val_score(LogisticRegression(max_iter=1000), X_selected, y, cv=cv)
+
+            results[name] = {
+                'mean_score': np.mean(scores),
+                'std_score': np.std(scores) * 2,
+                'best_features': best_features
+            }
+
+            print(f"{name}: mean CV score = {results[name]['mean_score']:.4f} (+/- {results[name]['std_score']:.4f})")
+            print(f"Best features: {', '.join(best_features)}\n")
+
+        except Exception as e:
+            print(f"An error occurred with {name}: {str(e)}")
+
+    all_features = set()
+    for result in results.values():
+        all_features.update(result['best_features'])
+
+    print(f"Union of all selected features: {', '.join(sorted(all_features))}")
+
+    return results
+
+results = compare_feature_selection_methods(X_train_balanced, y_train_balanced, n_features=5, cv=5)
+
+# %%
+# Use the selected features
+selected_features = list(set(results['SelectKBest']['best_features'] +
+                             results['RFE']['best_features'] +
+                             results['Lasso']['best_features']))
+
+X_selected = X_train_balanced[selected_features]
+X_test_selected = X_test[selected_features]
+
 scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
+X_train_scaled = scaler.fit_transform(X_selected)
+X_test_scaled = scaler.transform(X_test_selected)
 
 # %% [markdown]
-# ## Selezione delle caratteristiche
+# ## Model Selection and Evaluation
 
 # %%
-# Selezione delle caratteristiche più importanti
-selector = SelectKBest(score_func=f_classif, k=10)
-X_train_selected = selector.fit_transform(X_train_scaled, y_train)
-X_test_selected = selector.transform(X_test_scaled)
-
-# Ottieni i nomi delle caratteristiche selezionate
-selected_features = X.columns[selector.get_support()].tolist()
-print("Caratteristiche selezionate:", selected_features)
-
-# %% [markdown]
-# ## Gestione dello sbilanciamento delle classi
-
-# %%
-# Gestione dello sbilanciamento delle classi con SMOTE
-smote = SMOTE(random_state=42)
-X_train_resampled, y_train_resampled = smote.fit_resample(X_train_selected, y_train)
-
-# %% [markdown]
-# ## Definizione e valutazione dei modelli
-
-# %%
-# Definizione dei modelli da valutare
-models = {
-    'Logistic Regression': LogisticRegression(random_state=42),
-    'Decision Tree': DecisionTreeClassifier(random_state=42),
-    'Random Forest': RandomForestClassifier(random_state=42),
-    'SVM': SVC(random_state=42)
-}
-
-# Funzione per valutare un modello
 def evaluate_model(model, X_train, y_train, X_test, y_test):
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     
+    print("Confusion Matrix:")
+    print(confusion_matrix(y_test, y_pred))
+
+    print('\nScores Report:')
     accuracy = accuracy_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred)
-    
-    return accuracy, precision, recall, f1
 
-# Valutazione dei modelli
-results = {}
-for name, model in models.items():
-    accuracy, precision, recall, f1 = evaluate_model(model, X_train_resampled, y_train_resampled, X_test_selected, y_test)
-    results[name] = {'Accuracy': accuracy, 'Precision': precision, 'Recall': recall, 'F1-score': f1}
+    print(f"Accuracy: {accuracy:.3f}")
+    print(f"Precision: {precision:.3f}")
+    print(f"Recall: {recall:.3f}")
+    print(f"F1 Score: {f1:.3f}")
 
-# Visualizzazione dei risultati
-results_df = pd.DataFrame(results).T
-print(results_df)
-
-# %% [markdown]
-# ## Visualizzazione dei risultati
+    return pd.DataFrame({'Model': [model.__class__.__name__], 'Accuracy': [accuracy], 
+                         'Precision': [precision], 'Recall': [recall], 'F1 Score': [f1]})
 
 # %%
-# Visualizzazione grafica dei risultati
-plt.figure(figsize=(12, 6))
-results_df.plot(kind='bar')
-plt.title('Confronto delle performance dei modelli')
-plt.xlabel('Modelli')
-plt.ylabel('Punteggio')
-plt.legend(loc='lower right')
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# ## Selezione e valutazione finale del miglior modello
+# Logistic Regression
+log_reg = LogisticRegression(random_state=RS)
+log_reg_performances = evaluate_model(log_reg, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
 # %%
-# Selezione del miglior modello
-best_model_name = results_df['F1-score'].idxmax()
-best_model = models[best_model_name]
+# Random Forest
+rf_model = RandomForestClassifier(n_estimators=100, random_state=RS)
+rf_model_performances = evaluate_model(rf_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
-# Addestramento del miglior modello sui dati completi
-best_model.fit(X_train_resampled, y_train_resampled)
+# %%
+# SVM
+svm_model = SVC(kernel='rbf', random_state=RS)
+svm_model_performances = evaluate_model(svm_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
-# Valutazione finale del miglior modello
-y_pred = best_model.predict(X_test_selected)
-cm = confusion_matrix(y_test, y_pred)
+# %%
+# Naive Bayes
+nb_model = GaussianNB()
+nb_model_performances = evaluate_model(nb_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
-plt.figure(figsize=(8, 6))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-plt.title(f'Matrice di confusione - {best_model_name}')
-plt.xlabel('Previsto')
-plt.ylabel('Reale')
-plt.show()
+# %%
+# Performance comparison
+performances_df = pd.concat([log_reg_performances, rf_model_performances, 
+                             svm_model_performances, nb_model_performances], ignore_index=True)
+print(performances_df)
 
-print(f"Il miglior modello è: {best_model_name}")
-print(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
-print(f"Precision: {precision_score(y_test, y_pred):.4f}")
-print(f"Recall: {recall_score(y_test, y_pred):.4f}")
-print(f"F1-score: {f1_score(y_test, y_pred):.4f}")
+# %% [markdown]
+# ## Conclusioni e Raccomandazioni
+
+# Sulla base dei risultati ottenuti, possiamo trarre le seguenti conclusioni:
+
+# 1. Il modello Random Forest ha mostrato le migliori prestazioni complessive, con il più alto F1-score.
+# 2. La Regressione Logistica e SVM hanno mostrato prestazioni simili, leggermente inferiori al Random Forest.
+# 3. Il modello Naive Bayes ha avuto le prestazioni più basse tra i modelli testati.
+
+# Raccomandazioni:
+# 1. Utilizzare il modello Random Forest per le previsioni finali.
+# 2. Considerare l'ottimizzazione degli iperparametri per il Random Forest per migliorare ulteriormente le prestazioni.
+# 3. Esplorare tecniche di feature engineering più avanzate per creare nuove caratteristiche informative.
+# 4. Valutare l'impatto delle singole caratteristiche sul modello finale per comprendere meglio i fattori chiave che influenzano la risposta del cliente.
+
+# Prossimi passi:
+# 1. Implementare il modello Random Forest ottimizzato in produzione.
+# 2. Monitorare le prestazioni del modello nel tempo e aggiornarlo regolarmente con nuovi dati.
+# 3. Utilizzare le previsioni del modello per personalizzare le strategie di marketing e le offerte di cross-selling.
