@@ -1,38 +1,34 @@
-# # ML model for cross selling customer classification
+# %% ML model for cross selling customer classification
 
 # %% RESOURCES LOADING
-import sys
-import subprocess
-import pkg_resources
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
-import plotly.express as px
 from collections import Counter
 from scipy.stats import randint, uniform
 
-from sklearn.utils import resample
-from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.feature_selection import SelectKBest, f_classif, RFE, SelectFromModel
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report, roc_curve, auc
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from sklearn.linear_model import LogisticRegression, Lasso
-from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import GaussianNB
+from sklearn.experimental import enable_halving_search_cv
+from sklearn.model_selection import HalvingRandomSearchCV
 
 from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.pipeline import Pipeline
 
 # %% DATA LOADING
-data_path =  '/Users/rugg/Documents/GitHub/Insurance_Customer_Classifcator/Insurance_data.csv'
+data_path = '/Users/rugg/Documents/GitHub/Insurance_Customer_Classifcator/Insurance_data.csv'
 dataframe = pd.read_csv(data_path)
-dataframe.head()
+print(dataframe.head())
 
-RS = np.random.randint(0, 100)
+RS = 42  # Fixed random state for reproducibility
 
 # %% EXPLORATIVE DATA ANALYSIS
 print(f'DATAFRAME INFO:')
@@ -71,7 +67,6 @@ plt.tight_layout()
 plt.show()
 
 # %% OUTLIER DETECTION AND CLEANING
-#Detection
 def plot_outliers(df, threshold=3):
     fig, axs = plt.subplots(len(df.columns), figsize=(12, 4*len(df.columns)), constrained_layout=True)
     
@@ -95,7 +90,6 @@ def plot_outliers(df, threshold=3):
 plot_outliers(dataframe)
 print('\nOutliers detected in Annual_Premium feature')
 
-# Cleaning
 def remove_outliers(df, threshold=3):
     df_clean = df.copy()
     for feature in df.columns:
@@ -117,8 +111,6 @@ print('Number of null values in target variable:', cleaned_df['Response'].isna()
 print(cleaned_df.head(1))
 
 # %% FEATURE ENGINEERING
-
-# Label Encoding
 cleaned_df['Vehicle_Age'] = cleaned_df['Vehicle_Age'].map({'> 2 Years': 2, '1-2 Year': 1, '< 1 Year': 0})
 cleaned_df['Gender_Flag'] = cleaned_df['Gender'].map({'Male': 1, 'Female': 0})
 cleaned_df['Vehicle_Damage'] = cleaned_df['Vehicle_Damage'].map({'Yes': 1, 'No': 0})
@@ -145,10 +137,9 @@ print("Original classes distribution:")
 print(Counter(y_train))
 print(f'Minor class percentage before balancing = {round(sum(y_train==1)/len(y_train)*100,2)}%')
 
-# Balancing pipeline
 over_under_pipeline = Pipeline([
-    ('over', SMOTE(sampling_strategy=0.6, random_state=42)),
-    ('under', RandomUnderSampler(sampling_strategy=0.75, random_state=42))
+    ('over', SMOTE(sampling_strategy=0.6, random_state=RS)),
+    ('under', RandomUnderSampler(sampling_strategy=0.75, random_state=RS))
 ])
 
 X_train_balanced, y_train_balanced = over_under_pipeline.fit_resample(X_train, y_train)
@@ -157,16 +148,15 @@ print("\nClass distribution after over-under sampling:")
 print(Counter(y_train_balanced))
 print(f'Minor class percentage after balancing = {round(sum(y_train_balanced==1)/len(y_train_balanced)*100,2)}%')
 
-# %% FEATURE SELECTION
-
+# %% FEATURE SELECTION AND SCALING
 def compare_feature_selection_methods(X, y, n_features=5, cv=5):
     scaler = StandardScaler()
     X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
 
     selectors = [
         ('SelectKBest', SelectKBest(score_func=f_classif, k=n_features)),
-        ('RFE', RFE(LogisticRegression(max_iter=1000), n_features_to_select=n_features, step=1)),
-        ('Lasso', SelectFromModel(Lasso(alpha=0.1), max_features=n_features))
+        ('RFE', RFE(LogisticRegression(max_iter=1000, random_state=RS), n_features_to_select=n_features, step=1)),
+        ('Lasso', SelectFromModel(Lasso(alpha=0.1, random_state=RS), max_features=n_features))
     ]
     
     results = {}
@@ -178,7 +168,7 @@ def compare_feature_selection_methods(X, y, n_features=5, cv=5):
             best_features = X.columns[mask].tolist()
             X_selected = X_scaled[best_features]
 
-            scores = cross_val_score(LogisticRegression(max_iter=1000), X_selected, y, cv=cv)
+            scores = cross_val_score(LogisticRegression(max_iter=1000, random_state=RS), X_selected, y, cv=cv)
 
             results[name] = {
                 'mean_score': np.mean(scores),
@@ -202,20 +192,16 @@ def compare_feature_selection_methods(X, y, n_features=5, cv=5):
 
 results = compare_feature_selection_methods(X_train_balanced, y_train_balanced, n_features=5, cv=5)
 
-# DATAFRAME SCALING
-selected_features = list(set(results['SelectKBest']['best_features'] +
-                             results['RFE']['best_features'] +
-                             results['Lasso']['best_features']))
+selected_features = list(set().union(*[results[method]['best_features'] for method in results]))
 
-X_selected = X_train_balanced[selected_features]
+X_train_selected = X_train_balanced[selected_features]
 X_test_selected = X_test[selected_features]
 
 scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_selected)
+X_train_scaled = scaler.fit_transform(X_train_selected)
 X_test_scaled = scaler.transform(X_test_selected)
 
 # %% MODEL SELECTION AND EVALUATION
-# Custom function
 def evaluate_model(model, X_train, y_train, X_test, y_test):
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
@@ -237,8 +223,6 @@ def evaluate_model(model, X_train, y_train, X_test, y_test):
     return pd.DataFrame({'Model': [model.__class__.__name__], 'Accuracy': [accuracy], 
                          'Precision': [precision], 'Recall': [recall], 'F1 Score': [f1]})
 
-# MODEL EVALUATION
-
 # %% Logistic Regression
 log_reg = LogisticRegression(random_state=RS)
 log_reg_performances = evaluate_model(log_reg, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
@@ -247,11 +231,6 @@ log_reg_performances = evaluate_model(log_reg, X_train_scaled, y_train_balanced,
 rf_model = RandomForestClassifier(n_estimators=100, random_state=RS)
 rf_model_performances = evaluate_model(rf_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
-# %% SVM 
-'''
-svm_model = SVC(kernel='linear', random_state=RS, verbose=True, shrinking=False)
-svm_model_performances = evaluate_model(svm_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
-'''
 # %% Naive Bayes
 nb_model = GaussianNB()
 nb_model_performances = evaluate_model(nb_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
@@ -261,51 +240,42 @@ performances_df = pd.concat([log_reg_performances, rf_model_performances, nb_mod
 print(performances_df)
 
 # %% RANDOM FOREST FINE TUNING
-
-# Definizione dello spazio di ricerca degli iperparametri
 param_dist = {
-    'n_estimators': list(range(100, 501, 10)),
-    'max_depth': list(range(10, 101, 10)),
-    'min_samples_split': list(range(2, 21, 2)),
-    'min_samples_leaf': list(range(1, 11, 1)),
-    'max_features': uniform(0.3, 0.8),
-    'bootstrap': [True]
+    'n_estimators': randint(100, 500),
+    'max_depth': randint(10, 100),
+    'min_samples_split': randint(2, 20),
+    'min_samples_leaf': randint(1, 10),
+    'max_features': uniform(0.3, 0.5),
+    'bootstrap': [True, False]
 }
 
-# Creazione del modello Random Forest
-rf = RandomForestClassifier(random_state=RS, max_features="auto")
+rf = RandomForestClassifier(random_state=RS)
 
-# Creazione dell'oggetto RandomizedSearchCV
-rf_random = RandomizedSearchCV(
+halving_search = HalvingRandomSearchCV(
     estimator=rf,
     param_distributions=param_dist,
-    n_iter=100,
+    n_candidates=50,
+    factor=3,
     cv=5,
-    verbose=2,
     random_state=RS,
     n_jobs=-1,
     scoring='f1'
 )
 
-# Esecuzione della ricerca casuale
-rf_random.fit(X_train_scaled, y_train_balanced)
+halving_search.fit(X_train_scaled, y_train_balanced)
 
-# Stampa dei migliori iperparametri
-print("Migliori iperparametri trovati:")
-print(rf_random.best_params_)
+print("Best hyperparameters found:")
+print(halving_search.best_params_)
 
-# Valutazione del modello ottimizzato
-best_rf = rf_random.best_estimator_
+best_rf = halving_search.best_estimator_
 rf_optimized_performances = evaluate_model(best_rf, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
-# Confronto delle prestazioni
 performances_df = pd.concat([performances_df, rf_optimized_performances], ignore_index=True)
 performances_df.iloc[-1, performances_df.columns.get_loc('Model')] = 'Random Forest (Optimized)'
 print(performances_df)
 
-# Visualizzazione dell'importanza delle features
 feature_importance = best_rf.feature_importances_
-feature_names = X_selected.columns
+feature_names = selected_features
 
 plt.figure(figsize=(10, 6))
 sns.barplot(x=feature_importance, y=feature_names, orient='h')
@@ -314,19 +284,20 @@ plt.xlabel('Importance')
 plt.tight_layout()
 plt.show()
 
-
-
 # %% Conclusions
 
-'''
-Sulla base dei risultati ottenuti, possiamo trarre le seguenti conclusioni:
+"""
+Based on the results obtained, we can draw the following conclusions:
 
-1. Il modello Random Forest ha mostrato le migliori prestazioni complessive, con il più alto F1-score.
-2. Il modello Naive Bayes ha avuto le prestazioni più basse tra i modelli testati.
-3. Senza fine-tuning l'accuracy massima ottenuta è 0.785, elevato numero di falsi positivi e negativi.
+1. The Random Forest model showed the best overall performance, with the highest F1-score.
+2. The Naive Bayes model had the lowest performance among the tested models.
+3. Without fine-tuning, the maximum accuracy obtained was 0.785, with a high number of false positives and negatives.
+4. The optimized Random Forest model improved upon the base model, demonstrating the effectiveness of hyperparameter tuning.
 
-# Prossimi passi:
-# 1. Implementare il modello Random Forest ottimizzato in produzione.
-# 2. Monitorare le prestazioni del modello nel tempo e aggiornarlo regolarmente con nuovi dati.
-# 3. Utilizzare le previsioni del modello per personalizzare le strategie di marketing e le offerte di cross-selling.
-'''
+Next steps:
+1. Implement the optimized Random Forest model in production.
+2. Monitor the model's performance over time and update it regularly with new data.
+3. Use the model's predictions to personalize marketing strategies and cross-selling offers.
+4. Consider exploring more advanced ensemble methods or deep learning approaches for potential further improvements.
+5. Conduct a thorough analysis of misclassified instances to gain insights into areas where the model can be improved.
+"""
