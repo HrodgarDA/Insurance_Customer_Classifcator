@@ -30,7 +30,7 @@ from imblearn.pipeline import Pipeline
 # %% DATA LOADING
 data_path =  '/Users/rugg/Documents/GitHub/Insurance_Customer_Classifcator/Insurance_data.csv'
 dataframe = pd.read_csv(data_path)
-print(dataframe.head())
+dataframe.head()
 
 RS = np.random.randint(0, 100)
 
@@ -248,16 +248,16 @@ rf_model = RandomForestClassifier(n_estimators=100, random_state=RS)
 rf_model_performances = evaluate_model(rf_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
 # %% SVM 
+'''
 svm_model = SVC(kernel='linear', random_state=RS, verbose=True, shrinking=False)
 svm_model_performances = evaluate_model(svm_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
-
+'''
 # %% Naive Bayes
 nb_model = GaussianNB()
 nb_model_performances = evaluate_model(nb_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
 # %% Performance comparison
-performances_df = pd.concat([log_reg_performances, rf_model_performances, 
-                             svm_model_performances, nb_model_performances], ignore_index=True)
+performances_df = pd.concat([log_reg_performances, rf_model_performances, nb_model_performances], ignore_index=True)
 print(performances_df)
 
 # %% RANDOM FOREST FINE TUNING
