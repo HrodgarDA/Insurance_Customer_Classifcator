@@ -264,16 +264,15 @@ print(performances_df)
 
 # Definizione dello spazio di ricerca degli iperparametri
 param_dist = {
-    'n_estimators': randint(100, 500),
-    'max_depth': randint(10, 100),
-    'min_samples_split': randint(2, 20),
-    'min_samples_leaf': randint(1, 10),
-    'max_features': uniform(0.1, 0.9),
+    'n_estimators': list(range(100, 501, 10)),
+    'max_depth': list(range(10, 101, 10)),
+    'min_samples_split': list(range(2, 21, 2)),
+    'min_samples_leaf': list(range(1, 11, 1)),
     'bootstrap': [True, False]
 }
 
 # Creazione del modello Random Forest
-rf = RandomForestClassifier(random_state=RS)
+rf = RandomForestClassifier(random_state=RS, max_features="auto")
 
 # Creazione dell'oggetto RandomizedSearchCV
 rf_random = RandomizedSearchCV(
