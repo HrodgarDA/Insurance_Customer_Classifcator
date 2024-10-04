@@ -11,9 +11,10 @@ import seaborn as sns
 from scipy import stats
 import plotly.express as px
 from collections import Counter
+from scipy.stats import randint, uniform
 
 from sklearn.utils import resample
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.feature_selection import SelectKBest, f_classif, RFE, SelectFromModel
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report, roc_curve, auc
@@ -237,46 +238,95 @@ def evaluate_model(model, X_train, y_train, X_test, y_test):
                          'Precision': [precision], 'Recall': [recall], 'F1 Score': [f1]})
 
 # MODEL EVALUATION
-# Logistic Regression
+
+# %% Logistic Regression
 log_reg = LogisticRegression(random_state=RS)
 log_reg_performances = evaluate_model(log_reg, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
-# %%
-# Random Forest
+
+# %% Random Forest
 rf_model = RandomForestClassifier(n_estimators=100, random_state=RS)
 rf_model_performances = evaluate_model(rf_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
-# %%
-# SVM
-svm_model = SVC(kernel='rbf', random_state=RS)
+# %% SVM 
+svm_model = SVC(kernel='linear', random_state=RS, verbose=True, shrinking=False)
 svm_model_performances = evaluate_model(svm_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
-# %%
-# Naive Bayes
+# %% Naive Bayes
 nb_model = GaussianNB()
 nb_model_performances = evaluate_model(nb_model, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
 
-# %%
-# Performance comparison
+# %% Performance comparison
 performances_df = pd.concat([log_reg_performances, rf_model_performances, 
                              svm_model_performances, nb_model_performances], ignore_index=True)
 print(performances_df)
 
-# %% [markdown]
-# ## Conclusioni e Raccomandazioni
+# %% RANDOM FOREST FINE TUNING
 
-# Sulla base dei risultati ottenuti, possiamo trarre le seguenti conclusioni:
+# Definizione dello spazio di ricerca degli iperparametri
+param_dist = {
+    'n_estimators': randint(100, 500),
+    'max_depth': randint(10, 100),
+    'min_samples_split': randint(2, 20),
+    'min_samples_leaf': randint(1, 10),
+    'max_features': uniform(0.1, 0.9),
+    'bootstrap': [True, False]
+}
 
-# 1. Il modello Random Forest ha mostrato le migliori prestazioni complessive, con il più alto F1-score.
-# 2. La Regressione Logistica e SVM hanno mostrato prestazioni simili, leggermente inferiori al Random Forest.
-# 3. Il modello Naive Bayes ha avuto le prestazioni più basse tra i modelli testati.
+# Creazione del modello Random Forest
+rf = RandomForestClassifier(random_state=RS)
 
-# Raccomandazioni:
-# 1. Utilizzare il modello Random Forest per le previsioni finali.
-# 2. Considerare l'ottimizzazione degli iperparametri per il Random Forest per migliorare ulteriormente le prestazioni.
-# 3. Esplorare tecniche di feature engineering più avanzate per creare nuove caratteristiche informative.
-# 4. Valutare l'impatto delle singole caratteristiche sul modello finale per comprendere meglio i fattori chiave che influenzano la risposta del cliente.
+# Creazione dell'oggetto RandomizedSearchCV
+rf_random = RandomizedSearchCV(
+    estimator=rf,
+    param_distributions=param_dist,
+    n_iter=100,
+    cv=5,
+    verbose=2,
+    random_state=RS,
+    n_jobs=-1,
+    scoring='f1'
+)
+
+# Esecuzione della ricerca casuale
+rf_random.fit(X_train_scaled, y_train_balanced)
+
+# Stampa dei migliori iperparametri
+print("Migliori iperparametri trovati:")
+print(rf_random.best_params_)
+
+# Valutazione del modello ottimizzato
+best_rf = rf_random.best_estimator_
+rf_optimized_performances = evaluate_model(best_rf, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
+
+# Confronto delle prestazioni
+performances_df = pd.concat([performances_df, rf_optimized_performances], ignore_index=True)
+performances_df.iloc[-1, performances_df.columns.get_loc('Model')] = 'Random Forest (Optimized)'
+print(performances_df)
+
+# Visualizzazione dell'importanza delle features
+feature_importance = best_rf.feature_importances_
+feature_names = X_selected.columns
+
+plt.figure(figsize=(10, 6))
+sns.barplot(x=feature_importance, y=feature_names, orient='h')
+plt.title('Feature Importance in Optimized Random Forest')
+plt.xlabel('Importance')
+plt.tight_layout()
+plt.show()
+
+
+
+# %% Conclusions
+
+'''
+Sulla base dei risultati ottenuti, possiamo trarre le seguenti conclusioni:
+
+1. Il modello Random Forest ha mostrato le migliori prestazioni complessive, con il più alto F1-score.
+2. Il modello Naive Bayes ha avuto le prestazioni più basse tra i modelli testati.
+3. Senza fine-tuning l'accuracy massima ottenuta è 0.785, elevato numero di falsi positivi e negativi.
 
 # Prossimi passi:
 # 1. Implementare il modello Random Forest ottimizzato in produzione.
 # 2. Monitorare le prestazioni del modello nel tempo e aggiornarlo regolarmente con nuovi dati.
 # 3. Utilizzare le previsioni del modello per personalizzare le strategie di marketing e le offerte di cross-selling.
+'''
