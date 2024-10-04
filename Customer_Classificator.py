@@ -268,7 +268,8 @@ param_dist = {
     'max_depth': list(range(10, 101, 10)),
     'min_samples_split': list(range(2, 21, 2)),
     'min_samples_leaf': list(range(1, 11, 1)),
-    'bootstrap': [True, False]
+    'max_features': uniform(0.3, 0.8),
+    'bootstrap': [True]
 }
 
 # Creazione del modello Random Forest
