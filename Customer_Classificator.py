@@ -1,34 +1,9 @@
-# %% [markdown]
-# # Previsione di opportunità di Cross Sell di assicurazioni
+# # ML model for cross selling customer classification
 
-# %% [markdown]
-# ## Importazione delle librerie
-
-# %%
+# %% RESOURCES LOADING
 import sys
 import subprocess
 import pkg_resources
-
-# Lista delle librerie richieste
-required = {
-    "pandas", "numpy", "matplotlib", "seaborn", "scikit-learn", "imbalanced-learn",
-    "scipy", "plotly", "imblearn"
-}
-
-# Controlla le librerie installate
-installed = {pkg.key for pkg in pkg_resources.working_set}
-missing = required - installed
-
-# Se ci sono librerie mancanti, installale
-if missing:
-    print("Installazione delle librerie mancanti...")
-    python = sys.executable
-    subprocess.check_call([python, '-m', 'pip', 'install', *missing], stdout=subprocess.DEVNULL)
-    print("Installazione completata.")
-else:
-    print("Tutte le librerie richieste sono già installate.")
-
-# %%
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -51,19 +26,14 @@ from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.pipeline import Pipeline
 
-# %% [markdown]
-# ## Caricamento e esplorazione dei dati
-
-# %%
-# Caricamento dei dati
+# %% DATA LOADING
 data_path =  '/Users/rugg/Documents/GitHub/Insurance_Customer_Classifcator/Insurance_data.csv'
 dataframe = pd.read_csv(data_path)
 print(dataframe.head())
 
 RS = np.random.randint(0, 100)
 
-# %%
-# Informazioni sul dataset
+# %% EXPLORATIVE DATA ANALYSIS
 print(f'DATAFRAME INFO:')
 print(dataframe.info())
 print("_"*70)
@@ -72,17 +42,12 @@ print("_"*70)
 print(f'DATAFRAME DESCRIPTION: \n {dataframe.describe()}')
 print("_"*70)
 
-# %% [markdown]
-# ## Visualizzazione dei dati
-
-# %%
 # Target Variable distribution
 plt.figure(figsize=(8, 6))
 sns.countplot(x='Response', data=dataframe, hue='Response')
 plt.title('Target class value distribution')
 plt.show()
 
-# %%
 # Distribution of feature values
 features = dataframe.columns.drop(['Response', 'id'])
 n_features = len(features)
@@ -104,8 +69,8 @@ for i, feature in enumerate(features):
 plt.tight_layout()
 plt.show()
 
-# %%
-# Outlier detection
+# %% OUTLIER DETECTION AND CLEANING
+#Detection
 def plot_outliers(df, threshold=3):
     fig, axs = plt.subplots(len(df.columns), figsize=(12, 4*len(df.columns)), constrained_layout=True)
     
@@ -129,8 +94,7 @@ def plot_outliers(df, threshold=3):
 plot_outliers(dataframe)
 print('\nOutliers detected in Annual_Premium feature')
 
-# %%
-# Data cleaning
+# Cleaning
 def remove_outliers(df, threshold=3):
     df_clean = df.copy()
     for feature in df.columns:
@@ -151,10 +115,8 @@ print(f"Percentage of values kept: {percentage}%")
 print('Number of null values in target variable:', cleaned_df['Response'].isna().sum())
 print(cleaned_df.head(1))
 
-# %% [markdown]
-# ## Feature Engineering e Selezione
+# %% FEATURE ENGINEERING
 
-# %%
 # Label Encoding
 cleaned_df['Vehicle_Age'] = cleaned_df['Vehicle_Age'].map({'> 2 Years': 2, '1-2 Year': 1, '< 1 Year': 0})
 cleaned_df['Gender_Flag'] = cleaned_df['Gender'].map({'Male': 1, 'Female': 0})
@@ -166,7 +128,6 @@ cleaned_df = cleaned_df[[col for col in cleaned_df if col != 'Response'] + ['Res
 
 print(cleaned_df.head(3))
 
-# %%
 # Correlation matrix
 correlation_matrix = cleaned_df.corr()
 plt.figure(figsize=(12, 10))
@@ -174,8 +135,7 @@ sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1, ce
 plt.title('Correlation Matrix', fontsize=16)
 plt.show()
 
-# %%
-# Train-test split and balancing
+# %% TARGET CLASS BALANCING
 X = cleaned_df.drop('Response', axis=1)
 y = cleaned_df['Response']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RS)
@@ -196,10 +156,8 @@ print("\nClass distribution after over-under sampling:")
 print(Counter(y_train_balanced))
 print(f'Minor class percentage after balancing = {round(sum(y_train_balanced==1)/len(y_train_balanced)*100,2)}%')
 
-# %% [markdown]
-# ## Feature Selection
+# %% FEATURE SELECTION
 
-# %%
 def compare_feature_selection_methods(X, y, n_features=5, cv=5):
     scaler = StandardScaler()
     X_scaled = pd.DataFrame(scaler.fit_transform(X), columns=X.columns)
@@ -243,8 +201,7 @@ def compare_feature_selection_methods(X, y, n_features=5, cv=5):
 
 results = compare_feature_selection_methods(X_train_balanced, y_train_balanced, n_features=5, cv=5)
 
-# %%
-# Use the selected features
+# DATAFRAME SCALING
 selected_features = list(set(results['SelectKBest']['best_features'] +
                              results['RFE']['best_features'] +
                              results['Lasso']['best_features']))
@@ -256,10 +213,8 @@ scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_selected)
 X_test_scaled = scaler.transform(X_test_selected)
 
-# %% [markdown]
-# ## Model Selection and Evaluation
-
-# %%
+# %% MODEL SELECTION AND EVALUATION
+# Custom function
 def evaluate_model(model, X_train, y_train, X_test, y_test):
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
@@ -281,11 +236,10 @@ def evaluate_model(model, X_train, y_train, X_test, y_test):
     return pd.DataFrame({'Model': [model.__class__.__name__], 'Accuracy': [accuracy], 
                          'Precision': [precision], 'Recall': [recall], 'F1 Score': [f1]})
 
-# %%
+# MODEL EVALUATION
 # Logistic Regression
 log_reg = LogisticRegression(random_state=RS)
 log_reg_performances = evaluate_model(log_reg, X_train_scaled, y_train_balanced, X_test_scaled, y_test)
-
 # %%
 # Random Forest
 rf_model = RandomForestClassifier(n_estimators=100, random_state=RS)
