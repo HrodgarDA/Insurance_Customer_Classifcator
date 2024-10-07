@@ -254,9 +254,9 @@ rf = RandomForestClassifier(random_state=RS)
 halving_search = HalvingRandomSearchCV(
     estimator=rf,
     param_distributions=param_dist,
-    n_candidates=100,
-    factor=3,
-    cv=5,
+    n_candidates=1000,
+    factor=2,
+    cv=10,
     random_state=RS,
     n_jobs=-1,
     scoring='f1'
